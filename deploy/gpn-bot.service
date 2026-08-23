@@ -1,0 +1,32 @@
+[Unit]
+Description=GPN fuel status Telegram bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gpn
+Group=gpn
+WorkingDirectory=/opt/gpn_fuel_bot
+EnvironmentFile=/opt/gpn_fuel_bot/.env
+Environment=GPN_DB=/var/lib/gpn/gpn.db
+ExecStart=/opt/gpn_fuel_bot/.venv/bin/python bot.py
+Restart=always
+RestartSec=10
+
+# базовое ужесточение прав: боту нужен только свой каталог с базой
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/gpn
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gpn-bot
+
+[Install]
+WantedBy=multi-user.target

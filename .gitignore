@@ -1,0 +1,43 @@
+# СЕКРЕТЫ — никогда не коммитить
+.env
+.env.local
+*.env
+!.env.example
+
+# База с подписками пользователей: персональные данные, в репозиторий не место
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Адрес API конкретной установки, получается через discover.py
+endpoint.json
+sample_*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+
+# Локальные сборочные артефакты
+dist/
+build/
+
+# Выгрузки парсера
+*.csv
+*.json
+!.vscode/*.json
+!.github/**/*.json
+
+# Окружение разработки
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/settings.local.json

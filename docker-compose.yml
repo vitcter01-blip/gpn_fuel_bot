@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    container_name: gpn-fuel-bot
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - gpn-data:/data
+      # endpoint.json, полученный из discover.py, подкладывается снаружи
+      - ./endpoint.json:/app/endpoint.json:ro
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  gpn-data:

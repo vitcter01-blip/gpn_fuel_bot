@@ -1,0 +1,52 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    env:
+      PYTHONUTF8: "1"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Тесты намеренно не требуют сети и внешних зависимостей:
+      # httpx и aiogram импортируются лениво
+      - name: Проверка парсера, времени и ссылок
+        run: python test_parser.py
+
+      - name: Проверка конфигурации
+        env:
+          GPN_DB: /tmp/ci.db
+        run: python test_config.py
+
+      - name: Компиляция всех модулей
+        run: python -m compileall -q .
+
+  test-windows:
+    runs-on: windows-latest
+    env:
+      PYTHONUTF8: "1"
+      GPN_DB: ${{ runner.temp }}/gpn-ci.db
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Проверка скриптов в Windows
+        run: |
+          python test_parser.py
+          python test_config.py
+          python -m compileall -q .
