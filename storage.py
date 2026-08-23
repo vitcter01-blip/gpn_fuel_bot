@@ -306,6 +306,37 @@ class Storage:
         with self._lock:
             return self.db.execute(sql, (norm_code(fuel_code),)).fetchall()
 
+    def stations_with_fuel_in_city(self, fuel_code: str, city: str,
+                                   only_available: bool = True) -> list[sqlite3.Row]:
+        """АЗС с выбранной маркой в городе."""
+        city_like = f"%{city.strip().lower()}%"
+        sql = ("SELECT s.id, s.address, s.name, f.price, f.site_time, f.available "
+               "FROM fuel_state f JOIN stations s ON s.id = f.station_id "
+               "WHERE f.fuel_code = ? AND (pylower(s.address) LIKE ? "
+               "OR pylower(s.name) LIKE ?)")
+        if only_available:
+            sql += " AND f.available = 1"
+        sql += " ORDER BY s.address"
+        with self._lock:
+            return self.db.execute(
+                sql, (norm_code(fuel_code), city_like, city_like)).fetchall()
+
+    def stations_with_gasoline(self) -> list[sqlite3.Row]:
+        """АЗС, где доступна хотя бы одна бензиновая марка 92/95/98/100."""
+        with self._lock:
+            rows = self.db.execute(
+                "SELECT s.*, f.fuel_code FROM fuel_state f "
+                "JOIN stations s ON s.id = f.station_id "
+                "WHERE f.available = 1 ORDER BY s.address").fetchall()
+
+        result, seen = [], set()
+        for row in rows:
+            key = norm_code(row["fuel_code"])
+            if row["id"] not in seen and any(grade in key for grade in ("92", "95", "98", "100")):
+                result.append(row)
+                seen.add(row["id"])
+        return result
+
     # ---------------------------------------------------------------- токены кнопок
 
     def token_for(self, station_id: str) -> str:

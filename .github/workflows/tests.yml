@@ -30,6 +30,9 @@ jobs:
           GPN_DB: /tmp/ci.db
         run: python test_config.py
 
+      - name: Проверка выборок хранилища
+        run: python test_storage.py
+
       - name: Компиляция всех модулей
         run: python -m compileall -q .
 
@@ -49,4 +52,5 @@ jobs:
           $env:GPN_DB = Join-Path $env:RUNNER_TEMP "gpn-ci.db"
           python test_parser.py
           python test_config.py
+          python test_storage.py
           python -m compileall -q .
