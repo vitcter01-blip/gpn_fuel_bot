@@ -1,4 +1,0 @@
--r requirements.txt
-
-# Требуется только для однократного запуска discover.py.
-playwright>=1.44

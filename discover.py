@@ -2,8 +2,8 @@
 Определение реального API-адреса карты АЗС.
 
 Открывает https://gpnbonus.ru/fuel/refuel-map в браузере, слушает сетевые ответы
-и находит тот, из которого распознаются АЗС. Найденный адрес сохраняется
-в endpoint.json — дальше parser.py берёт его оттуда.
+и находит тот, из которого распознаются АЗС. parser.py вызывает этот модуль
+автоматически и хранит найденный адрес только в памяти процесса.
 
 Установка:
     pip install playwright && playwright install chromium
@@ -20,9 +20,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from pathlib import Path
 
-from parser import ENDPOINT_CACHE, MAP_URL, parse_payload
+from parser import MAP_URL, parse_payload
 
 # признаки того, что страница нас не пустила
 BLOCK_MARKERS = ("доступ ограничен", "access denied", "403 forbidden", "captcha",
@@ -32,6 +33,10 @@ BLOCK_MARKERS = ("доступ ограничен", "access denied", "403 forbid
 
 async def discover(headless: bool = True, dump: bool = False,
                    verbose: bool = False, wait: int = 25) -> str | None:
+    # Диагностика содержит Unicode-символы; стандартная Windows CP1251 их не печатает.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -113,6 +118,10 @@ async def discover(headless: bool = True, dump: bool = False,
             pass
         await page.wait_for_timeout(wait * 1000)
 
+        # Дожидаемся обработчиков последних сетевых ответов до закрытия браузера.
+        if pending:
+            await asyncio.gather(*list(pending), return_exceptions=True)
+
         # диагностика страницы
         title = await page.title()
         text = (await page.inner_text("body"))[:4000].lower()
@@ -139,8 +148,7 @@ async def discover(headless: bool = True, dump: bool = False,
         return None
 
     best_url, count, _ = max(hits, key=lambda h: h[1])
-    ENDPOINT_CACHE.write_text(json.dumps({"url": best_url}, ensure_ascii=False, indent=2), "utf-8")
-    print(f"\nСохранено в {ENDPOINT_CACHE.name}: {best_url}  ({count} АЗС)")
+    print(f"\nОбнаружен API: {best_url}  ({count} АЗС)")
     return best_url
 
 

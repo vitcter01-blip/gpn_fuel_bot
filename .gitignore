@@ -10,8 +10,6 @@
 *.sqlite
 *.sqlite3
 
-# Адрес API конкретной установки, получается через discover.py
-endpoint.json
 sample_*.json
 
 # Python

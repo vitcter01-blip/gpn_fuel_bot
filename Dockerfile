@@ -1,17 +1,18 @@
-# Лёгкий образ для бота. Playwright сюда НЕ ставим: discover.py запускается
-# один раз на машине с браузером, а в контейнер попадает готовый endpoint.json.
+# Chromium нужен для автоматического обнаружения API карты при запуске.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     GPN_DB=/data/gpn.db
 
 WORKDIR /app
 
 # зависимости отдельным слоем — переустанавливаются только при их изменении
 COPY requirements.txt .
-RUN grep -v playwright requirements.txt > /tmp/req.txt \
-    && pip install --no-cache-dir -r /tmp/req.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && python -m playwright install --with-deps chromium \
+    && chmod -R a+rX /ms-playwright
 
 COPY *.py ./
 

@@ -7,10 +7,11 @@ JSON рекурсивно обходится и из него достаются
 (есть цена и/или статус наличия).
 
 Источник данных ищется в таком порядке:
-  1. endpoint.json (создаётся discover.py — самый надёжный путь)
-  2. переменная окружения GPN_API_URL
+  1. переменная окружения GPN_API_URL
+  2. адрес, автоматически найденный ранее в текущем процессе
   3. список эвристических кандидатов CANDIDATE_ENDPOINTS
   4. HTML страницы карты — поиск встроенного состояния (__NUXT__/__INITIAL_STATE__)
+  5. автоматическое обнаружение сетевого запроса через Playwright
 """
 from __future__ import annotations
 
@@ -19,7 +20,6 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from maps import is_yandex_url
@@ -28,7 +28,7 @@ from models import Fuel, Station
 log = logging.getLogger("gpn.parser")
 
 MAP_URL = "https://gpnbonus.ru/fuel/refuel-map"
-ENDPOINT_CACHE = Path(__file__).with_name("endpoint.json")
+_MEMORY_ENDPOINT: str | None = None
 
 # Эвристические кандидаты. Реальный адрес лучше получить через discover.py.
 CANDIDATE_ENDPOINTS = [
@@ -544,12 +544,22 @@ class GpnClient:
     def _load_endpoint() -> Optional[str]:
         if os.getenv("GPN_API_URL"):
             return os.environ["GPN_API_URL"]
-        if ENDPOINT_CACHE.exists():
-            try:
-                return json.loads(ENDPOINT_CACHE.read_text("utf-8")).get("url")
-            except Exception:
-                return None
-        return None
+        return _MEMORY_ENDPOINT
+
+    @staticmethod
+    def _remember_endpoint(url: str) -> None:
+        global _MEMORY_ENDPOINT
+        _MEMORY_ENDPOINT = url
+
+    async def _discover_endpoint(self) -> Optional[str]:
+        """Находит API через браузер, не создавая файлов на диске."""
+        try:
+            from discover import discover
+
+            return await discover(headless=True, dump=False, verbose=False, wait=10)
+        except Exception as exc:
+            log.warning("Автоматическое обнаружение API не удалось: %s", exc)
+            return None
 
     async def __aenter__(self) -> "GpnClient":
         import httpx  # ленивый импорт: чистый разбор работает без зависимостей
@@ -587,8 +597,7 @@ class GpnClient:
                 if url != self.endpoint:
                     log.info("Рабочий эндпоинт: %s", url)
                     self.endpoint = url
-                    ENDPOINT_CACHE.write_text(
-                        json.dumps({"url": url}, ensure_ascii=False), "utf-8")
+                    self._remember_endpoint(url)
                 return stations
             errors.append(f"{url}: JSON получен, но АЗС не распознаны")
 
@@ -604,9 +613,27 @@ class GpnClient:
         except Exception as exc:
             errors.append(f"{MAP_URL}: {type(exc).__name__}")
 
+        # Последний fallback: браузер сам наблюдает запросы карты. Найденный URL
+        # хранится только в памяти процесса и повторно используется при опросах.
+        discovered = await self._discover_endpoint()
+        if discovered:
+            try:
+                payload = await self._get_json(discovered)
+                stations = parse_payload(payload)
+                if stations:
+                    self.endpoint = discovered
+                    self._remember_endpoint(discovered)
+                    log.info("API автоматически обнаружен: %s", discovered)
+                    return stations
+                errors.append(f"{discovered}: JSON получен, но АЗС не распознаны")
+            except Exception as exc:
+                errors.append(f"{discovered}: {type(exc).__name__}")
+        else:
+            errors.append("Playwright: API не обнаружен")
+
         raise RuntimeError(
-            "Не удалось получить данные АЗС. Запустите `python discover.py`, "
-            "чтобы определить актуальный API-адрес.\nПопытки:\n  - "
+            "Не удалось получить данные АЗС автоматически. При необходимости "
+            "задайте GPN_API_URL вручную.\nПопытки:\n  - "
             + "\n  - ".join(errors)
         )
 

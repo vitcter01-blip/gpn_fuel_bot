@@ -26,15 +26,13 @@ id -u "$USER_NAME" &>/dev/null || useradd --system --no-create-home --shell /usr
 echo "==> Копирую файлы в $APP_DIR"
 mkdir -p "$APP_DIR" "$DATA_DIR"
 cp "$SRC_DIR"/*.py "$SRC_DIR/requirements.txt" "$APP_DIR/"
-# endpoint.json переносим, только если он уже получен через discover.py
-[[ -f "$SRC_DIR/endpoint.json" ]] && cp "$SRC_DIR/endpoint.json" "$APP_DIR/"
 
 echo "==> Ставлю зависимости в виртуальное окружение"
 python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
-# playwright нужен только для discover.py, на сервере он не требуется
-grep -v playwright "$APP_DIR/requirements.txt" > /tmp/req.txt
-"$APP_DIR/.venv/bin/pip" install --quiet -r /tmp/req.txt
+"$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
+echo "==> Ставлю Chromium для автоматического обнаружения API"
+"$APP_DIR/.venv/bin/python" -m playwright install --with-deps chromium
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
     if [[ -f "$SRC_DIR/.env" ]]; then

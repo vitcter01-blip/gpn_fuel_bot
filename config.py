@@ -266,7 +266,7 @@ def _report() -> int:
     clamp = "  ⚠️ поднято до минимума" if app.poll_interval_was_clamped else ""
     print(f"  интервал опроса    {app.poll_interval} с{clamp}")
     print(f"  база               {app.db_path}")
-    print(f"  адрес API сайта    {app.api_url or 'из endpoint.json'}")
+    print(f"  адрес API сайта    {app.api_url or 'определяется автоматически'}")
 
     issues = bot.problems()
     if issues:

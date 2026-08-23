@@ -1,7 +1,8 @@
 """Проверка нормализации на синтетических ответах разной формы: python test_parser.py"""
+import asyncio
 import sys
 
-from parser import is_krasnodar, parse_payload, to_bool
+from parser import GpnClient, is_krasnodar, parse_payload, to_bool
 
 
 # Windows PowerShell может запускать Python с однобайтной кодировкой консоли.
@@ -246,9 +247,41 @@ def test_regressions() -> None:
     check("rtext = широта,долгота", rt.startswith("45."))
 
 
+def test_automatic_endpoint_discovery() -> None:
+    """Клиент сам находит API, если URL не задан и кандидаты устарели."""
+    discovered_url = "https://gpnbonus.ru/api/discovered"
+
+    class AutoDiscoverClient(GpnClient):
+        def __init__(self):
+            super().__init__()
+            self.endpoint = None
+            self.discovery_calls = 0
+            self._client = object()
+
+        async def _get_json(self, url):
+            if url == discovered_url:
+                return PAYLOAD_A
+            raise RuntimeError("устаревший URL")
+
+        async def _discover_endpoint(self):
+            self.discovery_calls += 1
+            return discovered_url
+
+    async def run():
+        client = AutoDiscoverClient()
+        stations = await client.fetch_stations()
+        check("API обнаружен автоматически", client.endpoint == discovered_url)
+        check("обнаружение выполнено один раз", client.discovery_calls == 1)
+        check("ответ найденного API разобран", len(stations) == 1)
+
+    print("\nавтоматическое обнаружение API:")
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     main()
     test_time_and_status()
     test_maps_links()
     test_regressions()
+    test_automatic_endpoint_discovery()
     print("\nВсе проверки пройдены ✅")
