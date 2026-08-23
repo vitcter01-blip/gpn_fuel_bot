@@ -73,6 +73,14 @@ def main() -> None:
     check("нормальное значение не трогается", app.poll_interval == 600)
     check("подъёма не было", not app.poll_interval_was_clamped)
 
+    print("\nBenzuber API:")
+    secret = "test-secret-benzuber-key-123456"
+    _, app = with_env(BOT_TOKEN=GOOD_TOKEN, BENZUBER_API_KEY=secret)
+    check("ключ загружается из окружения", app.benzuber_api_key == secret)
+    check("ключ маскируется", secret not in app.masked_benzuber_api_key)
+    _, app = with_env(BOT_TOKEN=GOOD_TOKEN, BENZUBER_API_KEY=None)
+    check("ключ необязательный", app.benzuber_api_key is None)
+
     print("\nразбор значений:")
     bot, _ = with_env(BOT_TOKEN=GOOD_TOKEN, ALERT_ON_GONE="нет")
     check("'нет' понимается как выключено", bot.alert_on_gone is False)

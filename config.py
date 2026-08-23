@@ -215,6 +215,7 @@ class AppConfig:
     requested_poll_interval: int = 300   # что просили до ограничения снизу
     db_path: Path = field(default_factory=lambda: Path(__file__).with_name("gpn.db"))
     api_url: Optional[str] = None        # адрес API сайта вручную
+    benzuber_api_key: Optional[str] = None
     history_limit: int = 60
     page_size: int = 8
 
@@ -228,6 +229,7 @@ class AppConfig:
             requested_poll_interval=requested,
             db_path=Path(_env("GPN_DB") or Path(__file__).with_name("gpn.db")),
             api_url=_env("GPN_API_URL") or None,
+            benzuber_api_key=_env("BENZUBER_API_KEY") or None,
             history_limit=_env_int("HISTORY_LIMIT", 60, minimum=2),
             page_size=_env_int("PAGE_SIZE", 8, minimum=1),
         )
@@ -237,6 +239,13 @@ class AppConfig:
         """Значение фиксируется при загрузке: читать окружение заново нельзя,
         оно может измениться, и признак стал бы неверным."""
         return self.requested_poll_interval < self.poll_interval
+
+    @property
+    def masked_benzuber_api_key(self) -> str:
+        if not self.benzuber_api_key:
+            return "не задан"
+        key = self.benzuber_api_key
+        return f"{key[:4]}…{key[-4:]}" if len(key) > 10 else "задан (скрыт)"
 
 
 def load() -> tuple[BotConfig, AppConfig]:
@@ -267,6 +276,7 @@ def _report() -> int:
     print(f"  интервал опроса    {app.poll_interval} с{clamp}")
     print(f"  база               {app.db_path}")
     print(f"  адрес API сайта    {app.api_url or 'определяется автоматически'}")
+    print(f"  Benzuber API key   {app.masked_benzuber_api_key}")
 
     issues = bot.problems()
     if issues:
