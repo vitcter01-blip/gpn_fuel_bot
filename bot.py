@@ -87,6 +87,7 @@ def main_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=BTN_SUBS), KeyboardButton(text=BTN_HELP)],
         ],
         resize_keyboard=True,
+        is_persistent=True,
         input_field_placeholder="Или просто напишите адрес",
     )
 
@@ -96,13 +97,8 @@ def home_row() -> list[InlineKeyboardButton]:
 
 
 def menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=BTN_FIND, callback_data="m:find"),
-         InlineKeyboardButton(text=BTN_FUEL, callback_data="m:fuel")],
-        [InlineKeyboardButton(text=BTN_GAS, callback_data="m:gas")],
-        [InlineKeyboardButton(text=BTN_MY, callback_data="m:my"),
-         InlineKeyboardButton(text=BTN_SUBS, callback_data="m:subs")],
-    ])
+    """Возврат к закреплённому нижнему меню без дублирования его кнопок."""
+    return InlineKeyboardMarkup(inline_keyboard=[home_row()])
 
 
 def cities_kb() -> InlineKeyboardMarkup:
@@ -417,7 +413,6 @@ async def poller(bot: Bot) -> None:
 @dp.message(CommandStart())
 async def on_start(message: Message) -> None:
     await message.answer(HELP, reply_markup=main_kb(), disable_web_page_preview=True)
-    await message.answer("С чего начнём?", reply_markup=menu_kb())
 
 
 @dp.message(F.text == BTN_HELP)
@@ -490,7 +485,7 @@ async def _edit(call: CallbackQuery, text: str,
 
 @dp.callback_query(F.data == "m:main")
 async def cb_main(call: CallbackQuery) -> None:
-    await _edit(call, "Главное меню:", menu_kb())
+    await _edit(call, "Выберите действие в закреплённом меню внизу экрана.", None)
     await call.answer()
 
 
