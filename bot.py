@@ -43,6 +43,7 @@ PAGE_SIZE = APP_CFG.page_size
 storage = Storage(APP_CFG.db_path)
 cache: dict[str, Station] = {}
 dp = Dispatcher()
+refresh_lock = asyncio.Lock()
 
 # кнопки нижнего меню
 BTN_FIND = "🔍 Найти АЗС"
@@ -321,17 +322,34 @@ async def show_search(message: Message, query: str) -> None:
 # ---------------------------------------------------------------- фоновый опрос
 
 async def refresh() -> list[Change]:
-    async with GpnClient() as client:
-        stations = await client.fetch_krasnodar()
-    if not stations:
-        log.warning("Получено 0 АЗС по Краснодарскому краю")
-        return []
-    storage.upsert_stations(stations)
-    changes = storage.diff_and_update(stations)
-    cache.clear()
-    cache.update({s.id: s for s in stations})
-    log.info("Обновлено АЗС: %d, изменений: %d", len(stations), len(changes))
-    return changes
+    async with refresh_lock:
+        async with GpnClient() as client:
+            stations = await client.fetch_krasnodar()
+        if not stations:
+            log.warning("Получено 0 АЗС по Краснодарскому краю")
+            return []
+        storage.upsert_stations(stations)
+        changes = storage.diff_and_update(stations)
+        cache.clear()
+        cache.update({s.id: s for s in stations})
+        log.info("Обновлено АЗС: %d, изменений: %d", len(stations), len(changes))
+        return changes
+
+
+async def ensure_fuel_data() -> Optional[str]:
+    """Загружает данные по требованию; возвращает текст ошибки или None."""
+    if storage.fuel_codes():
+        return None
+    try:
+        await refresh()
+    except Exception as exc:
+        log.error("Загрузка по запросу пользователя не удалась: %s", exc)
+        return ("Не удалось получить данные АЗС. Проверьте доступ сервера к "
+                "gpnbonus.ru или посмотрите журнал: journalctl -u gpn-bot -n 50")
+    if not storage.fuel_codes():
+        return ("Сайт ответил, но данные по топливу не найдены. "
+                "Попробуйте позже или проверьте журнал сервиса.")
+    return None
 
 
 async def notify(bot: Bot, changes: list[Change]) -> None:
@@ -420,7 +438,11 @@ async def on_find_button(message: Message) -> None:
 @dp.message(F.text == BTN_FUEL)
 async def on_fuel_button(message: Message) -> None:
     if not storage.fuel_codes():
-        return await message.answer("Данные ещё загружаются, попробуйте через минуту.")
+        status = await message.answer("⏳ Загружаю актуальные данные АЗС…")
+        error = await ensure_fuel_data()
+        if error:
+            return await status.edit_text(error)
+        return await status.edit_text("Какая марка нужна?", reply_markup=fuel_choice_kb())
     await message.answer("Какая марка нужна?", reply_markup=fuel_choice_kb())
 
 
@@ -493,6 +515,12 @@ async def cb_find(call: CallbackQuery) -> None:
 
 @dp.callback_query(F.data == "m:fuel")
 async def cb_fuel(call: CallbackQuery) -> None:
+    if not storage.fuel_codes():
+        await _edit(call, "⏳ Загружаю актуальные данные АЗС…")
+        error = await ensure_fuel_data()
+        if error:
+            await _edit(call, error, menu_kb())
+            return await call.answer("Не удалось загрузить данные", show_alert=True)
     await _edit(call, "Какая марка нужна?", fuel_choice_kb())
     await call.answer()
 
