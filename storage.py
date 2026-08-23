@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS user_state (
     chat_id INTEGER PRIMARY KEY,
     station_id TEXT,
     updated_at INTEGER,
-    last_query TEXT             -- последний поисковый запрос: для листания страниц
+    last_query TEXT,            -- последний поисковый запрос: для листания страниц
+    selected_fuel TEXT,
+    selected_city TEXT
 );
 
 -- Журнал изменений статуса по каждой марке: нужен, чтобы знать,
@@ -103,7 +105,8 @@ class Storage:
             if name not in cols:
                 self.db.execute(f"ALTER TABLE fuel_state ADD COLUMN {name} {decl}")
         ucols = {r["name"] for r in self.db.execute("PRAGMA table_info(user_state)")}
-        for name, decl in (("last_query", "TEXT"),):
+        for name, decl in (("last_query", "TEXT"), ("selected_fuel", "TEXT"),
+                           ("selected_city", "TEXT")):
             if ucols and name not in ucols:
                 self.db.execute(f"ALTER TABLE user_state ADD COLUMN {name} {decl}")
 
@@ -257,6 +260,43 @@ class Storage:
             row = self.db.execute(
                 "SELECT station_id FROM user_state WHERE chat_id=?", (chat_id,)).fetchone()
         return row["station_id"] if row else None
+
+    def set_fuel_filter(self, chat_id: int, fuel_code: str) -> None:
+        fuel_key = norm_code(fuel_code)
+        with self._lock:
+            self.db.execute(
+                "INSERT INTO user_state (chat_id,selected_fuel,updated_at) VALUES (?,?,?) "
+                "ON CONFLICT(chat_id) DO UPDATE SET selected_fuel=excluded.selected_fuel, "
+                "updated_at=excluded.updated_at", (chat_id, fuel_key, int(time.time())))
+            self.db.commit()
+
+    def set_city_filter(self, chat_id: int, city: str) -> None:
+        with self._lock:
+            self.db.execute(
+                "INSERT INTO user_state (chat_id,selected_city,updated_at) VALUES (?,?,?) "
+                "ON CONFLICT(chat_id) DO UPDATE SET selected_city=excluded.selected_city, "
+                "updated_at=excluded.updated_at", (chat_id, city.strip(), int(time.time())))
+            self.db.commit()
+
+    def user_filters(self, chat_id: int) -> tuple[Optional[str], Optional[str]]:
+        with self._lock:
+            row = self.db.execute(
+                "SELECT selected_fuel,selected_city FROM user_state WHERE chat_id=?",
+                (chat_id,)).fetchone()
+        return ((row["selected_fuel"], row["selected_city"])
+                if row else (None, None))
+
+    def filtered_stations(self, chat_id: int, limit: int = 60) -> list[sqlite3.Row]:
+        fuel_key, city = self.user_filters(chat_id)
+        if not fuel_key or not city:
+            return []
+        like = f"%{city.lower()}%"
+        with self._lock:
+            return self.db.execute(
+                "SELECT DISTINCT s.* FROM stations s JOIN fuel_state f ON f.station_id=s.id "
+                "WHERE f.fuel_code=? AND f.available=1 AND "
+                "(pylower(s.address) LIKE ? OR pylower(s.name) LIKE ?) "
+                "ORDER BY s.address LIMIT ?", (fuel_key, like, like, limit)).fetchall()
 
     def fuel_codes(self) -> list[tuple[str, str]]:
         """Все марки, встречавшиеся в данных: (ключ, отображаемый код)."""

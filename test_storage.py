@@ -32,6 +32,13 @@ def main() -> None:
     check("92 найден в Краснодаре", [r["id"] for r in rows] == ["1"])
     check("92 не найден в Сочи", not db.stations_with_fuel_in_city("АИ-92", "Сочи"))
 
+    print("\nвыбранный фильтр пользователя:")
+    db.set_fuel_filter(777, "АИ92")
+    db.set_city_filter(777, "Краснодар")
+    check("марка сохранена", db.user_filters(777) == ("АИ92", "Краснодар"))
+    rows = db.filtered_stations(777)
+    check("фильтр возвращает только подходящие АЗС", [r["id"] for r in rows] == ["1"])
+
     print("\nбензин в наличии:")
     rows = db.stations_with_gasoline()
     check("найдены бензиновые АЗС", {r["id"] for r in rows} == {"1", "3"})

@@ -30,6 +30,12 @@ async def check_start_menu() -> None:
         keyboard = message.answers[0][1]["reply_markup"]
         assert keyboard == bot.main_kb(), "Главное меню должно быть нижней клавиатурой"
         assert keyboard.is_persistent is True, "Нижнее меню должно оставаться закреплённым"
+        labels = [[button.text for button in row] for row in keyboard.keyboard]
+        assert labels == [
+            ["⛽ Выбрать топливо"],
+            ["🏙 Выбрать город"],
+            ["✅ Показать АЗС"],
+        ], "В главном меню должны остаться только три этапа фильтра"
 
 
 if __name__ == "__main__":

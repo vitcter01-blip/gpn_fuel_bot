@@ -21,14 +21,14 @@ from typing import Optional
 from aiogram import Bot, Dispatcher, F
 from aiogram.exceptions import (TelegramBadRequest, TelegramForbiddenError,
                                 TelegramRetryAfter)
-from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.filters import Command, CommandStart
 from aiogram.types import (CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, Message, ReplyKeyboardMarkup)
 
 import config
 from models import Station
 from parser import MSK, GpnClient, fmt_age, fmt_delta
-from storage import ANY_STATION, Change, Storage
+from storage import Change, Storage
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -45,13 +45,10 @@ cache: dict[str, Station] = {}
 dp = Dispatcher()
 refresh_lock = asyncio.Lock()
 
-# кнопки нижнего меню
-BTN_FIND = "🔍 Найти АЗС"
-BTN_MY = "⛽️ Моя АЗС"
-BTN_FUEL = "🔎 Где есть топливо"
-BTN_GAS = "⛽ Бензин в наличии"
-BTN_SUBS = "🔔 Подписки"
-BTN_HELP = "❓ Помощь"
+# три последовательных этапа нижнего меню
+BTN_FUEL = "⛽ Выбрать топливо"
+BTN_CITY = "🏙 Выбрать город"
+BTN_SHOW = "✅ Показать АЗС"
 
 CITIES = ["Краснодар", "Сочи", "Новороссийск", "Анапа",
           "Армавир", "Кропоткин", "Ейск", "Геленджик"]
@@ -59,12 +56,10 @@ CITIES = ["Краснодар", "Сочи", "Новороссийск", "Ана�
 HELP = (
     "⛽️ <b>Статус топлива на АЗС «Газпромнефть»</b>\n"
     "Краснодарский край\n\n"
-    "Всё управление — кнопками внизу экрана:\n\n"
-    f"<b>{BTN_FIND}</b> — выбрать город или ввести адрес\n"
-    f"<b>{BTN_MY}</b> — АЗС, которую вы выбрали последней\n"
-    f"<b>{BTN_FUEL}</b> — сначала марка, затем город\n"
-    f"<b>{BTN_GAS}</b> — все АЗС с бензином в наличии\n"
-    f"<b>{BTN_SUBS}</b> — за чем слежу\n\n"
+    "Выберите фильтр тремя кнопками внизу:\n\n"
+    f"1. <b>{BTN_FUEL}</b>\n"
+    f"2. <b>{BTN_CITY}</b>\n"
+    f"3. <b>{BTN_SHOW}</b>\n\n"
     "В карточке АЗС нажмите на марку, чтобы включить слежение: "
     "🔔 — слежу, 🔕 — нет. Как только топливо появится, придёт сообщение.\n\n"
     f"Данные обновляются каждые {POLL_INTERVAL // 60} мин."
@@ -81,14 +76,13 @@ def main_kb() -> ReplyKeyboardMarkup:
     """Постоянное меню внизу экрана."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_FIND)],
-            [KeyboardButton(text=BTN_MY), KeyboardButton(text=BTN_FUEL)],
-            [KeyboardButton(text=BTN_GAS)],
-            [KeyboardButton(text=BTN_SUBS), KeyboardButton(text=BTN_HELP)],
+            [KeyboardButton(text=BTN_FUEL)],
+            [KeyboardButton(text=BTN_CITY)],
+            [KeyboardButton(text=BTN_SHOW)],
         ],
         resize_keyboard=True,
         is_persistent=True,
-        input_field_placeholder="Или просто напишите адрес",
+        input_field_placeholder="Выберите топливо и город",
     )
 
 
@@ -123,21 +117,6 @@ def fuel_choice_kb() -> InlineKeyboardMarkup:
             rows.append(row); row = []
     if row:
         rows.append(row)
-    rows.append(home_row())
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def fuel_cities_kb(fuel_key: str) -> InlineKeyboardMarkup:
-    """Второй этап выбора: город после марки топлива."""
-    rows, row = [], []
-    for idx, city in enumerate(CITIES):
-        row.append(InlineKeyboardButton(
-            text=city, callback_data=f"fc:{fuel_key}:{idx}"))
-        if len(row) == 2:
-            rows.append(row); row = []
-    if row:
-        rows.append(row)
-    rows.append([InlineKeyboardButton(text="◀️ К маркам", callback_data="m:fuel")])
     rows.append(home_row())
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -202,19 +181,6 @@ def fuels_kb(chat_id: int, station: Station) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
-def subs_kb(chat_id: int) -> InlineKeyboardMarkup:
-    """Подписки: нажатие снимает слежение."""
-    buttons = []
-    for r in storage.list_subs(chat_id):
-        where = "весь край" if r["station_id"] == ANY_STATION else (
-            (r["address"] or r["station_id"])[:40])
-        buttons.append([InlineKeyboardButton(
-            text=f"🔕 {r['display_code'] or r['fuel_code']} — {where}",
-            callback_data=f"u:{storage.token_for(r['station_id'])}:{r['fuel_code']}")])
-    buttons.append(home_row())
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
-
-
 # ---------------------------------------------------------------- экраны
 
 def station_view(chat_id: int, station_id: str) -> tuple[str, Optional[InlineKeyboardMarkup]]:
@@ -224,7 +190,7 @@ def station_view(chat_id: int, station_id: str) -> tuple[str, Optional[InlineKey
 
     row = storage.station_row(station_id)
     if not row:
-        return "АЗС не найдена. Нажмите «🔍 Найти АЗС».", menu_kb()
+        return "АЗС не найдена. Повторите выбор топлива и города.", menu_kb()
     lines = []
     for r in storage.snapshot(station_id):
         mark = "✅" if r["available"] else ("❌" if r["available"] is not None else "❔")
@@ -266,50 +232,6 @@ def history_view(station_id: str, fuel_code: Optional[str] = None) -> str:
         return (f"По <b>{esc(title)}</b> история пока не накоплена — "
                 "нужен хотя бы один цикл опроса.")
     return f"📜 <b>{esc(title)}</b>\n\n" + "\n\n".join(blocks)
-
-
-def available_view(fuel_key: str, page: int) -> tuple[str, InlineKeyboardMarkup]:
-    rows = storage.stations_with_fuel(fuel_key)
-    display = next((d for k, d in storage.fuel_codes() if k == fuel_key), fuel_key)
-    if not rows:
-        return (f"Сейчас <b>{esc(display)}</b> нет ни на одной АЗС края.\n"
-                "Откройте любую АЗС и нажмите на марку — сообщу, когда появится.",
-                fuel_choice_kb())
-    text = f"✅ <b>{esc(display)}</b> есть на {len(rows)} АЗС:"
-    return text, stations_kb(rows, page, nav_prefix=f"a:{fuel_key}:")
-
-
-def fuel_city_view(fuel_key: str, city_idx: int, page: int
-                   ) -> tuple[str, InlineKeyboardMarkup]:
-    """АЗС с выбранной маркой в выбранном городе."""
-    city = CITIES[city_idx]
-    rows = storage.stations_with_fuel_in_city(fuel_key, city)
-    display = next((d for k, d in storage.fuel_codes() if k == fuel_key), fuel_key)
-    if not rows:
-        return (f"Сейчас <b>{esc(display)}</b> в городе <b>{esc(city)}</b> "
-                "не найдено.", fuel_cities_kb(fuel_key))
-    text = (f"✅ <b>{esc(display)}</b> · <b>{esc(city)}</b>\n"
-            f"В наличии на {len(rows)} АЗС:")
-    return text, stations_kb(rows, page, nav_prefix=f"fa:{fuel_key}:{city_idx}:")
-
-
-def gasoline_view(page: int) -> tuple[str, InlineKeyboardMarkup]:
-    rows = storage.stations_with_gasoline()
-    if not rows:
-        return "Сейчас бензин в наличии не найден.", menu_kb()
-    return (f"⛽ <b>Бензин в наличии</b> — {len(rows)} АЗС:",
-            stations_kb(rows, page, nav_prefix="g:"))
-
-
-async def show_search(message: Message, query: str) -> None:
-    rows = storage.search_stations(query, limit=60)
-    if not rows:
-        return await message.answer(
-            f"По запросу «{esc(query)}» ничего не нашлось.\nПопробуйте выбрать город:",
-            reply_markup=cities_kb())
-    storage.set_last_query(message.chat.id, query)
-    await message.answer(f"Найдено {len(rows)}. Выберите АЗС:",
-                         reply_markup=stations_kb(rows, 0, nav_prefix="q:"))
 
 
 # ---------------------------------------------------------------- фоновый опрос
@@ -415,16 +337,9 @@ async def on_start(message: Message) -> None:
     await message.answer(HELP, reply_markup=main_kb(), disable_web_page_preview=True)
 
 
-@dp.message(F.text == BTN_HELP)
 @dp.message(Command("help"))
 async def on_help(message: Message) -> None:
     await message.answer(HELP, reply_markup=main_kb(), disable_web_page_preview=True)
-
-
-@dp.message(F.text == BTN_FIND)
-async def on_find_button(message: Message) -> None:
-    await message.answer("Выберите город или напишите адрес сообщением:",
-                         reply_markup=cities_kb())
 
 
 @dp.message(F.text == BTN_FUEL)
@@ -438,37 +353,30 @@ async def on_fuel_button(message: Message) -> None:
     await message.answer("Какая марка нужна?", reply_markup=fuel_choice_kb())
 
 
-@dp.message(F.text == BTN_GAS)
-async def on_gas_button(message: Message) -> None:
-    text, keyboard = gasoline_view(0)
+@dp.message(F.text == BTN_CITY)
+async def on_city_button(message: Message) -> None:
+    await message.answer("Выберите город:", reply_markup=cities_kb())
+
+
+def filtered_view(chat_id: int, page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
+    fuel_key, city = storage.user_filters(chat_id)
+    if not fuel_key:
+        return "Сначала выберите топливо.", fuel_choice_kb()
+    if not city:
+        return "Теперь выберите город.", cities_kb()
+    rows = storage.filtered_stations(chat_id)
+    display = next((d for k, d in storage.fuel_codes() if k == fuel_key), fuel_key)
+    if not rows:
+        return (f"Сейчас <b>{esc(display)}</b> в городе <b>{esc(city)}</b> "
+                "в наличии не найдено.", menu_kb())
+    return (f"✅ <b>{esc(display)}</b> · <b>{esc(city)}</b> — {len(rows)} АЗС:",
+            stations_kb(rows, page, nav_prefix="filterpage:"))
+
+
+@dp.message(F.text == BTN_SHOW)
+async def on_show_button(message: Message) -> None:
+    text, keyboard = filtered_view(message.chat.id)
     await message.answer(text, reply_markup=keyboard)
-
-
-@dp.message(F.text == BTN_MY)
-async def on_my_button(message: Message) -> None:
-    station_id = storage.current_station(message.chat.id)
-    if not station_id:
-        return await message.answer(
-            "Вы ещё не выбирали АЗС. Нажмите «🔍 Найти АЗС».",
-            reply_markup=menu_kb())
-    text, keyboard = station_view(message.chat.id, station_id)
-    await message.answer(text, reply_markup=keyboard, disable_web_page_preview=True)
-
-
-@dp.message(F.text == BTN_SUBS)
-async def on_subs_button(message: Message) -> None:
-    if not storage.list_subs(message.chat.id):
-        return await message.answer(
-            "Пока ни за чем не слежу.\nОткройте АЗС и нажмите на нужную марку.",
-            reply_markup=menu_kb())
-    await message.answer("За чем слежу (нажмите, чтобы отключить):",
-                         reply_markup=subs_kb(message.chat.id))
-
-
-@dp.message(F.text & ~F.text.startswith("/"))
-async def on_free_text(message: Message) -> None:
-    """Любой текст считаем адресом для поиска — печатать команду не нужно."""
-    await show_search(message, message.text.strip())
 
 
 # ---------------------------------------------------------------- inline-кнопки
@@ -489,12 +397,6 @@ async def cb_main(call: CallbackQuery) -> None:
     await call.answer()
 
 
-@dp.callback_query(F.data == "m:find")
-async def cb_find(call: CallbackQuery) -> None:
-    await _edit(call, "Выберите город или напишите адрес сообщением:", cities_kb())
-    await call.answer()
-
-
 @dp.callback_query(F.data == "m:fuel")
 async def cb_fuel(call: CallbackQuery) -> None:
     if not storage.fuel_codes():
@@ -507,115 +409,48 @@ async def cb_fuel(call: CallbackQuery) -> None:
     await call.answer()
 
 
-@dp.callback_query(F.data == "m:gas")
-async def cb_gas(call: CallbackQuery) -> None:
-    text, keyboard = gasoline_view(0)
-    await _edit(call, text, keyboard)
-    await call.answer()
-
-
-@dp.callback_query(F.data == "m:subs")
-async def cb_subs(call: CallbackQuery) -> None:
-    if not storage.list_subs(call.message.chat.id):
-        await _edit(call, "Пока ни за чем не слежу.\n"
-                          "Откройте АЗС и нажмите на нужную марку.", menu_kb())
-    else:
-        await _edit(call, "За чем слежу (нажмите, чтобы отключить):",
-                    subs_kb(call.message.chat.id))
-    await call.answer()
-
-
-@dp.callback_query(F.data == "m:my")
-async def cb_my(call: CallbackQuery) -> None:
-    station_id = storage.current_station(call.message.chat.id)
-    if not station_id:
-        await _edit(call, "Вы ещё не выбирали АЗС.", menu_kb())
-        return await call.answer()
-    text, keyboard = station_view(call.message.chat.id, station_id)
-    await _edit(call, text, keyboard)
-    await call.answer()
-
-
 @dp.callback_query(F.data.startswith("c:"))
 async def cb_city(call: CallbackQuery) -> None:
-    """Город выбран кнопкой."""
+    """Сохраняет город как второй этап фильтра."""
     idx = call.data.split(":", 1)[1]
     if not idx.isdigit() or int(idx) >= len(CITIES):
         return await call.answer("Кнопка устарела", show_alert=True)
     city = CITIES[int(idx)]
-    rows = storage.search_stations(city, limit=60)
-    if not rows:
-        await _edit(call, f"В городе {esc(city)} АЗС не найдено.", cities_kb())
-        return await call.answer()
-    storage.set_last_query(call.message.chat.id, city)
-    await _edit(call, f"{esc(city)} — найдено {len(rows)}:",
-                stations_kb(rows, 0, nav_prefix="q:"))
-    await call.answer()
-
-
-@dp.callback_query(F.data.startswith("q:"))
-async def cb_query_page(call: CallbackQuery) -> None:
-    """Листание результатов поиска."""
-    page = call.data.split(":", 1)[1]
-    query = storage.last_query(call.message.chat.id)
-    if not query or not page.isdigit():
-        return await call.answer("Повторите поиск", show_alert=True)
-    rows = storage.search_stations(query, limit=60)
-    await _edit(call, f"«{esc(query)}» — найдено {len(rows)}:",
-                stations_kb(rows, int(page), nav_prefix="q:"))
-    await call.answer()
-
-
-@dp.callback_query(F.data.startswith("a:"))
-async def cb_available(call: CallbackQuery) -> None:
-    """Где есть выбранная марка."""
-    parts = call.data.split(":")
-    if len(parts) != 3 or not parts[2].isdigit():
-        return await call.answer("Кнопка устарела", show_alert=True)
-    text, keyboard = available_view(parts[1], int(parts[2]))
-    await _edit(call, text, keyboard)
-    await call.answer()
+    storage.set_city_filter(call.message.chat.id, city)
+    fuel_key, _ = storage.user_filters(call.message.chat.id)
+    if fuel_key:
+        await _edit(call, f"Город: <b>{esc(city)}</b>. Нажмите «{BTN_SHOW}» внизу.",
+                    menu_kb())
+    else:
+        await _edit(call, f"Город: <b>{esc(city)}</b>. Теперь выберите топливо.",
+                    fuel_choice_kb())
+    await call.answer("Город сохранён")
 
 
 @dp.callback_query(F.data.startswith("f:"))
 async def cb_fuel_city(call: CallbackQuery) -> None:
-    """После марки предлагаем выбрать город."""
+    """Сохраняет марку как первый этап фильтра."""
     fuel_key = call.data.split(":", 1)[1]
     if fuel_key not in {key for key, _ in storage.fuel_codes()}:
         return await call.answer("Кнопка устарела", show_alert=True)
     display = next((d for k, d in storage.fuel_codes() if k == fuel_key), fuel_key)
-    await _edit(call, f"Вы выбрали <b>{esc(display)}</b>. Теперь выберите город:",
-                fuel_cities_kb(fuel_key))
-    await call.answer()
+    storage.set_fuel_filter(call.message.chat.id, fuel_key)
+    _, city = storage.user_filters(call.message.chat.id)
+    if city:
+        await _edit(call, f"Топливо: <b>{esc(display)}</b>. Нажмите «{BTN_SHOW}» внизу.",
+                    menu_kb())
+    else:
+        await _edit(call, f"Топливо: <b>{esc(display)}</b>. Теперь выберите город:",
+                    cities_kb())
+    await call.answer("Топливо сохранено")
 
 
-@dp.callback_query(F.data.startswith("fc:"))
-async def cb_fuel_city_result(call: CallbackQuery) -> None:
-    parts = call.data.split(":")
-    if len(parts) != 3 or not parts[2].isdigit() or int(parts[2]) >= len(CITIES):
-        return await call.answer("Кнопка устарела", show_alert=True)
-    text, keyboard = fuel_city_view(parts[1], int(parts[2]), 0)
-    await _edit(call, text, keyboard)
-    await call.answer()
-
-
-@dp.callback_query(F.data.startswith("fa:"))
-async def cb_fuel_city_page(call: CallbackQuery) -> None:
-    parts = call.data.split(":")
-    if (len(parts) != 4 or not parts[2].isdigit() or not parts[3].isdigit()
-            or int(parts[2]) >= len(CITIES)):
-        return await call.answer("Кнопка устарела", show_alert=True)
-    text, keyboard = fuel_city_view(parts[1], int(parts[2]), int(parts[3]))
-    await _edit(call, text, keyboard)
-    await call.answer()
-
-
-@dp.callback_query(F.data.startswith("g:"))
-async def cb_gas_page(call: CallbackQuery) -> None:
+@dp.callback_query(F.data.startswith("filterpage:"))
+async def cb_filter_page(call: CallbackQuery) -> None:
     page = call.data.split(":", 1)[1]
     if not page.isdigit():
         return await call.answer("Кнопка устарела", show_alert=True)
-    text, keyboard = gasoline_view(int(page))
+    text, keyboard = filtered_view(call.message.chat.id, int(page))
     await _edit(call, text, keyboard)
     await call.answer()
 
@@ -664,24 +499,6 @@ async def cb_toggle(call: CallbackQuery) -> None:
     await call.answer(note)
 
 
-@dp.callback_query(F.data.startswith("u:"))
-async def cb_unsub(call: CallbackQuery) -> None:
-    """Снятие подписки с экрана «Подписки»."""
-    parts = call.data.split(":", 2)
-    if len(parts) != 3:
-        return await call.answer("Кнопка устарела", show_alert=True)
-    station_id = storage.station_for_token(parts[1])
-    if not station_id:
-        return await call.answer("Кнопка устарела", show_alert=True)
-    storage.del_sub(call.message.chat.id, station_id, parts[2])
-    if storage.list_subs(call.message.chat.id):
-        await _edit(call, "За чем слежу (нажмите, чтобы отключить):",
-                    subs_kb(call.message.chat.id))
-    else:
-        await _edit(call, "Подписок больше нет.", menu_kb())
-    await call.answer("🔕 Отключено")
-
-
 @dp.callback_query(F.data.startswith("h:"))
 async def cb_history(call: CallbackQuery) -> None:
     station_id = storage.station_for_token(call.data.split(":", 1)[1])
@@ -693,26 +510,6 @@ async def cb_history(call: CallbackQuery) -> None:
         home_row()])
     await _edit(call, history_view(station_id), keyboard)
     await call.answer()
-
-
-# ---------------------------------------------------------------- команды-псевдонимы
-
-@dp.message(Command("find"))
-async def cmd_find(message: Message, command: CommandObject) -> None:
-    query = (command.args or "").strip()
-    if not query:
-        return await on_find_button(message)
-    await show_search(message, query)
-
-
-@dp.message(Command("status"))
-async def cmd_status(message: Message) -> None:
-    await on_my_button(message)
-
-
-@dp.message(Command("list"))
-async def cmd_list(message: Message) -> None:
-    await on_subs_button(message)
 
 
 # ---------------------------------------------------------------- запуск
