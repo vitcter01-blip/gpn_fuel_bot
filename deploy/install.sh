@@ -7,6 +7,7 @@ APP_DIR=/opt/gpn_fuel_bot
 DATA_DIR=/var/lib/gpn
 SERVICE=gpn-bot
 USER_NAME=gpn
+BROWSER_DIR=$APP_DIR/.playwright
 
 die() { echo "Ошибка: $*" >&2; exit 1; }
 
@@ -32,7 +33,8 @@ python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --quiet --upgrade pip
 "$APP_DIR/.venv/bin/pip" install --quiet -r "$APP_DIR/requirements.txt"
 echo "==> Ставлю Chromium для автоматического обнаружения API"
-"$APP_DIR/.venv/bin/python" -m playwright install --with-deps chromium
+PLAYWRIGHT_BROWSERS_PATH="$BROWSER_DIR" \
+    "$APP_DIR/.venv/bin/python" -m playwright install --with-deps chromium
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
     if [[ -f "$SRC_DIR/.env" ]]; then
@@ -53,6 +55,11 @@ fi
 
 chown -R "$USER_NAME:$USER_NAME" "$APP_DIR" "$DATA_DIR"
 chmod 750 "$DATA_DIR"
+
+echo "==> Проверяю Chromium от имени $USER_NAME"
+runuser -u "$USER_NAME" -- env PLAYWRIGHT_BROWSERS_PATH="$BROWSER_DIR" \
+    "$APP_DIR/.venv/bin/python" -c \
+    'import asyncio; from playwright.async_api import async_playwright; exec("async def check():\n async with async_playwright() as p:\n  browser = await p.chromium.launch(headless=True)\n  await browser.close()\nasyncio.run(check())")'
 
 echo "==> Ставлю сервис"
 cp "$SRC_DIR/deploy/$SERVICE.service" "/etc/systemd/system/$SERVICE.service"

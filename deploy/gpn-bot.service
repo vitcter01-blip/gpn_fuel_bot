@@ -10,6 +10,7 @@ Group=gpn
 WorkingDirectory=/opt/gpn_fuel_bot
 EnvironmentFile=/opt/gpn_fuel_bot/.env
 Environment=GPN_DB=/var/lib/gpn/gpn.db
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/gpn_fuel_bot/.playwright
 ExecStart=/opt/gpn_fuel_bot/.venv/bin/python bot.py
 Restart=always
 RestartSec=10
