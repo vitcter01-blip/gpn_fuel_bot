@@ -37,7 +37,6 @@ jobs:
     runs-on: windows-latest
     env:
       PYTHONUTF8: "1"
-      GPN_DB: ${{ runner.temp }}/gpn-ci.db
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +46,7 @@ jobs:
 
       - name: Проверка скриптов в Windows
         run: |
+          $env:GPN_DB = Join-Path $env:RUNNER_TEMP "gpn-ci.db"
           python test_parser.py
           python test_config.py
           python -m compileall -q .
