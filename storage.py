@@ -40,7 +40,6 @@ CREATE TABLE IF NOT EXISTS user_state (
     chat_id INTEGER PRIMARY KEY,
     station_id TEXT,
     updated_at INTEGER,
-    lat REAL, lon REAL,         -- последняя присланная геопозиция: для маршрутов
     last_query TEXT             -- последний поисковый запрос: для листания страниц
 );
 
@@ -104,7 +103,7 @@ class Storage:
             if name not in cols:
                 self.db.execute(f"ALTER TABLE fuel_state ADD COLUMN {name} {decl}")
         ucols = {r["name"] for r in self.db.execute("PRAGMA table_info(user_state)")}
-        for name, decl in (("lat", "REAL"), ("lon", "REAL"), ("last_query", "TEXT")):
+        for name, decl in (("last_query", "TEXT"),):
             if ucols and name not in ucols:
                 self.db.execute(f"ALTER TABLE user_state ADD COLUMN {name} {decl}")
 
@@ -135,15 +134,6 @@ class Storage:
         with self._lock:
             return self.db.execute(
                 "SELECT * FROM stations WHERE id = ?", (station_id,)).fetchone()
-
-    def nearest(self, lat: float, lon: float, limit: int = 5) -> list[sqlite3.Row]:
-        """Ближайшие АЗС. Быстрая оценка расстояния в плоской проекции."""
-        with self._lock:
-            rows = self.db.execute(
-                "SELECT * FROM stations WHERE lat IS NOT NULL AND lon IS NOT NULL").fetchall()
-        scale = 0.7  # cos(45°) — широта Краснодара
-        rows.sort(key=lambda r: (r["lat"] - lat) ** 2 + ((r["lon"] - lon) * scale) ** 2)
-        return rows[:limit]
 
     # ---------------------------------------------------------------- состояние
 
@@ -247,23 +237,6 @@ class Storage:
                 "ON CONFLICT(chat_id) DO UPDATE SET station_id=excluded.station_id, "
                 "updated_at=excluded.updated_at", (chat_id, station_id, int(time.time())))
             self.db.commit()
-
-    def set_user_origin(self, chat_id: int, lat: float, lon: float) -> None:
-        with self._lock:
-            self.db.execute(
-                "INSERT INTO user_state (chat_id, lat, lon, updated_at) VALUES (?,?,?,?) "
-                "ON CONFLICT(chat_id) DO UPDATE SET lat=excluded.lat, lon=excluded.lon, "
-                "updated_at=excluded.updated_at", (chat_id, lat, lon, int(time.time())))
-            self.db.commit()
-
-    def user_origin(self, chat_id: int) -> Optional[tuple[float, float]]:
-        """Последняя геопозиция пользователя — точка отправления для маршрута."""
-        with self._lock:
-            row = self.db.execute(
-                "SELECT lat, lon FROM user_state WHERE chat_id=?", (chat_id,)).fetchone()
-        if row and row["lat"] is not None and row["lon"] is not None:
-            return (row["lat"], row["lon"])
-        return None
 
     def set_last_query(self, chat_id: int, query: str) -> None:
         with self._lock:

@@ -47,7 +47,6 @@ refresh_lock = asyncio.Lock()
 
 # кнопки нижнего меню
 BTN_FIND = "🔍 Найти АЗС"
-BTN_NEAR = "📍 Рядом со мной"
 BTN_MY = "⛽️ Моя АЗС"
 BTN_FUEL = "🔎 Где есть топливо"
 BTN_GAS = "⛽ Бензин в наличии"
@@ -62,7 +61,6 @@ HELP = (
     "Краснодарский край\n\n"
     "Всё управление — кнопками внизу экрана:\n\n"
     f"<b>{BTN_FIND}</b> — выбрать город или ввести адрес\n"
-    f"<b>{BTN_NEAR}</b> — ближайшие АЗС по геопозиции (один тап)\n"
     f"<b>{BTN_MY}</b> — АЗС, которую вы выбрали последней\n"
     f"<b>{BTN_FUEL}</b> — сначала марка, затем город\n"
     f"<b>{BTN_GAS}</b> — все АЗС с бензином в наличии\n"
@@ -83,8 +81,7 @@ def main_kb() -> ReplyKeyboardMarkup:
     """Постоянное меню внизу экрана."""
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text=BTN_FIND),
-             KeyboardButton(text=BTN_NEAR, request_location=True)],
+            [KeyboardButton(text=BTN_FIND)],
             [KeyboardButton(text=BTN_MY), KeyboardButton(text=BTN_FUEL)],
             [KeyboardButton(text=BTN_GAS)],
             [KeyboardButton(text=BTN_SUBS), KeyboardButton(text=BTN_HELP)],
@@ -200,7 +197,7 @@ def fuels_kb(chat_id: int, station: Station) -> InlineKeyboardMarkup:
     link_row = []
     if station.maps_link:
         link_row.append(InlineKeyboardButton(text="🗺 На карте", url=station.maps_link))
-    route = station.route_link(storage.user_origin(chat_id))
+    route = station.route_link()
     if route:
         link_row.append(InlineKeyboardButton(text="🧭 Маршрут", url=route))
     if link_row:
@@ -457,7 +454,7 @@ async def on_my_button(message: Message) -> None:
     station_id = storage.current_station(message.chat.id)
     if not station_id:
         return await message.answer(
-            "Вы ещё не выбирали АЗС. Нажмите «🔍 Найти АЗС» или «📍 Рядом со мной».",
+            "Вы ещё не выбирали АЗС. Нажмите «🔍 Найти АЗС».",
             reply_markup=menu_kb())
     text, keyboard = station_view(message.chat.id, station_id)
     await message.answer(text, reply_markup=keyboard, disable_web_page_preview=True)
@@ -471,16 +468,6 @@ async def on_subs_button(message: Message) -> None:
             reply_markup=menu_kb())
     await message.answer("За чем слежу (нажмите, чтобы отключить):",
                          reply_markup=subs_kb(message.chat.id))
-
-
-@dp.message(F.location)
-async def on_location(message: Message) -> None:
-    storage.set_user_origin(message.chat.id,
-                            message.location.latitude, message.location.longitude)
-    rows = storage.nearest(message.location.latitude, message.location.longitude, limit=20)
-    if not rows:
-        return await message.answer("Данные ещё не загружены, попробуйте через минуту.")
-    await message.answer("Ближайшие АЗС:", reply_markup=stations_kb(rows, 0, "n:"))
 
 
 @dp.message(F.text & ~F.text.startswith("/"))
@@ -581,17 +568,6 @@ async def cb_query_page(call: CallbackQuery) -> None:
     rows = storage.search_stations(query, limit=60)
     await _edit(call, f"«{esc(query)}» — найдено {len(rows)}:",
                 stations_kb(rows, int(page), nav_prefix="q:"))
-    await call.answer()
-
-
-@dp.callback_query(F.data.startswith("n:"))
-async def cb_near_page(call: CallbackQuery) -> None:
-    page = call.data.split(":", 1)[1]
-    origin = storage.user_origin(call.message.chat.id)
-    if not origin or not page.isdigit():
-        return await call.answer("Пришлите геопозицию заново", show_alert=True)
-    rows = storage.nearest(origin[0], origin[1], limit=20)
-    await _edit(call, "Ближайшие АЗС:", stations_kb(rows, int(page), "n:"))
     await call.answer()
 
 
